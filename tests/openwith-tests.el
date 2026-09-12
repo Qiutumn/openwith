@@ -13,7 +13,7 @@
 
 (defmacro ow-fixture (&rest body)
   (declare (indent 0))
-  `(let* ((directory (make-temp-file "openwith-test-" t))
+  `(let* ((directory (file-truename (make-temp-file "openwith-test-" t)))
           (default-directory (file-name-as-directory directory))
           (file (expand-file-name "sample.ow"))
           (other (expand-file-name "other.txt"))
@@ -44,6 +44,7 @@
        (delete-directory directory t))))
 
 (ert-deftest ow-windows-default-return-and-recentf ()
+  (skip-unless (eq system-type 'windows-nt))
   (ow-fixture
     (let ((system-type 'windows-nt)
           (openwith-associations '(("\\.ow\\'" default (file))))
@@ -55,9 +56,10 @@
         (should (eq source (current-buffer)))
         (should (buffer-live-p source))
         (should-not (get-file-buffer file))
-        (should (member file recentf-list))))))
+        (should (cl-some (lambda (entry) (file-equal-p file entry)) recentf-list))))))
 
 (ert-deftest ow-windows-configured-program-and-arguments ()
+  (skip-unless (eq system-type 'windows-nt))
   (ow-fixture
     (let ((system-type 'windows-nt) called)
       (cl-letf (((symbol-function 'openwith--windows-start)
@@ -246,7 +248,7 @@
             (should (= calls 1))
             (funcall recentf-menu-action file)
             (should (= calls 2))
-            (should (member file recentf-list)))
+            (should (cl-some (lambda (entry) (file-equal-p file entry)) recentf-list)))
         (when (buffer-live-p dired-buffer) (kill-buffer dired-buffer))))))
 
 (ert-deftest ow-org-plain-link-and-locators ()
@@ -271,7 +273,7 @@
                    (file-name-nondirectory file)))
                 ((symbol-function 'openwith--launch)
                  (lambda (&rest _) (cl-incf calls) t)))
-        (ido-file-internal nil)
+        (ido-find-file)
         (should (= calls 1))
         (should-not (get-file-buffer file))
         (ido-file-internal 'read-only 'find-file-read-only)

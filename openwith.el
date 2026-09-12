@@ -209,26 +209,43 @@ from Emacs's pipes; nohup prevents termination by SIGHUP."
          (nohup (openwith--executable "nohup"))
          (shell (openwith--executable "sh"))
          (log (make-temp-file "openwith-" nil ".log"))
+         (startup (generate-new-buffer " *openwith-startup*"))
          process)
     (unwind-protect
         (progn
           (setq process
                 (make-process
-                 :name "openwith" :buffer nil :noquery t
+                 :name "openwith" :buffer startup :noquery t
                  :connection-type 'pipe
                  :command (append
-                           (list shell "-c"
-                                 "log=$1; shift; exec \"$@\" </dev/null >/dev/null 2>\"$log\""
-                                 "openwith" log nohup program)
+                           (list nohup shell "-c"
+                                 "log=$1; shift; trap '' HUP; printf 'ready\\n'; exec \"$@\" </dev/null >/dev/null 2>\"$log\""
+                                 "openwith" log program)
                            arglist)
                  :sentinel #'ignore))
+          ;; Do not let Emacs exit before the child has installed its signal
+          ;; handling.  An unstarted nohup can itself be killed by SIGHUP.
+          (let ((deadline (+ (float-time) 15)))
+            (while (and (process-live-p process)
+                        (with-current-buffer startup
+                          (not (string-match-p "ready\n" (buffer-string))))
+                        (< (float-time) deadline))
+              (accept-process-output process 0.01)))
+          (unless (with-current-buffer startup
+                    (string-match-p "ready\n" (buffer-string)))
+            (user-error "Openwith: could not initialize launcher: %s"
+                        (with-current-buffer startup (string-trim (buffer-string)))))
           (process-put process 'openwith-log log)
           (process-put process 'openwith-program program)
           (set-process-sentinel process #'openwith--sentinel)
           ;; Cover a process which exited before sentinel installation.
           (openwith--sentinel process "")
           process)
-      (unless process (delete-file log)))))
+      (when process (set-process-buffer process nil))
+      (kill-buffer startup)
+      (unless (and process (process-get process 'openwith-program))
+        (when (and process (process-live-p process)) (delete-process process))
+        (when (file-exists-p log) (delete-file log))))))
 
 (defun openwith--launch (file association)
   "Launch FILE according to ASSOCIATION and return a launch result."
@@ -310,7 +327,8 @@ Declining the first matching association also leaves the file to Emacs."
   "Scope Ido interception to an opening METHOD in ORIGINAL with ARGS."
   (let ((openwith--ido-catch
          (and (not openwith-inhibit)
-              (memq method '(nil other-window other-frame))
+              (memq method '(nil selected-window other-window other-frame
+                             raise-frame maybe-frame display))
               (make-symbol "openwith-ido"))))
     (if openwith--ido-catch
         (catch openwith--ido-catch (apply original method args))
