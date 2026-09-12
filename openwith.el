@@ -71,6 +71,9 @@ This is independent of the current buffer's case-fold-search."
 (defvar openwith--ido-catch nil
   "Non-nil catch tag while an Ido file-opening command is active.")
 
+(defvar openwith--wildcard-files nil
+  "Pattern and remaining internal files during a wildcard opening command.")
+
 (defconst openwith--commands
   '(find-file find-file-other-window find-file-other-frame
     find-file-read-only find-file-read-only-other-window
@@ -301,11 +304,14 @@ Declining the first matching association also leaves the file to Emacs."
          (not (file-name-quoted-p filename))
          (string-match-p "[[*?]" filename)
          (file-expand-wildcards filename t))
-    (let ((files (file-expand-wildcards filename t))
-          (find-file-wildcards nil))
-      (delq nil (mapcar (lambda (file)
-                         (openwith--around-find-file original file nil))
-                       files))))
+    (let ((files (cl-remove-if #'openwith--try-open
+                               (file-expand-wildcards filename t))))
+      (when files
+        ;; Let the original command perform its window/frame and read-only
+        ;; handling once, with only internally opened files in its buffer list.
+        (let ((openwith-inhibit t)
+              (openwith--wildcard-files (cons (expand-file-name filename) files)))
+          (funcall original filename wildcards)))))
    ((openwith--try-open filename) nil)
    (t
     ;; Nested entry points must not retry confirmation.
@@ -335,13 +341,20 @@ Declining the first matching association also leaves the file to Emacs."
       (apply original method args))))
 
 (defun openwith--around-noselect (original filename &rest args)
-  "Intercept only Ido's final visit to FILENAME; otherwise call ORIGINAL.
-ARGS retains the normal find-file-noselect contract, including RAWFILE.
-Minibuffer previews and all other background visits remain untouched."
-  (if (and openwith--ido-catch (zerop (minibuffer-depth))
-           (not (nth 1 args)) (openwith--try-open filename))
-      (throw openwith--ido-catch nil)
-    (apply original filename args)))
+  "Preserve ORIGINAL's buffer contract for FILENAME and ARGS.
+Filter an active wildcard command's internal buffer list, or dispatch
+Ido's final visit.  All other background visits remain untouched."
+  (cond
+   ((and openwith--wildcard-files (nth 2 args)
+         (equal (expand-file-name filename) (car openwith--wildcard-files)))
+    (let ((files (cdr openwith--wildcard-files))
+          (openwith--wildcard-files nil))
+      (mapcar (lambda (file)
+                (funcall original file (nth 0 args) (nth 1 args) nil)) files)))
+   ((and openwith--ido-catch (zerop (minibuffer-depth))
+         (not (nth 1 args)) (openwith--try-open filename))
+    (throw openwith--ido-catch nil))
+   (t (apply original filename args))))
 
 (defun openwith-file-handler (operation &rest args)
   "Relay legacy file handler OPERATION with ARGS without interception."

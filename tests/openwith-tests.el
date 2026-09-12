@@ -196,6 +196,21 @@
       (find-file file)
       (should (equal buffer-file-name file)))))
 
+(ert-deftest ow-wildcards-preserve-window-and-read-only-semantics ()
+  (ow-fixture
+    (let ((third (expand-file-name "third.txt")) (calls 0))
+      (with-temp-file third (insert "third"))
+      (delete-other-windows)
+      (cl-letf (((symbol-function 'openwith--launch)
+                 (lambda (&rest _) (cl-incf calls) t)))
+        (let ((buffers (find-file-read-only-other-window
+                        (expand-file-name "*") t)))
+          (should (= calls 1))
+          (should (= (length (window-list)) 2))
+          (should (= (length buffers) 2))
+          (dolist (buffer buffers)
+            (should (buffer-local-value 'buffer-read-only buffer))))))))
+
 (ert-deftest ow-legacy-handler-relays ()
   (ow-fixture
     (push '("" . openwith-file-handler) file-name-handler-alist)
