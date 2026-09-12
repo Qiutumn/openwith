@@ -1,0 +1,51 @@
+name: Test
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ert:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            emacs: '28.2'
+          - os: ubuntu-latest
+            emacs: '30.2'
+          - os: macos-14
+            emacs: '30.2'
+          - os: windows-latest
+            emacs: '30.2'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: jcs090218/setup-emacs@54b61ac9c1d7011a54d2b6d66dedbcddf20e2fb9
+        with:
+          version: ${{ matrix.emacs }}
+      - name: Compile without warnings
+        run: emacs --batch -Q --eval "(setq byte-compile-error-on-warn t)" -f batch-byte-compile openwith.el
+      - uses: actions/checkout@v4
+        if: matrix.emacs == '30.2'
+        with:
+          repository: minad/consult
+          ref: 5f04c5b06056ed671612a2fce8e5424d789e85d7
+          path: .ci/consult
+      - uses: actions/checkout@v4
+        if: matrix.emacs == '30.2'
+        with:
+          repository: emacs-compat/compat
+          ref: 68967acba884271e26aebcb3a16b3b2f37196840
+          path: .ci/compat
+      - name: Run regression and native process tests
+        run: emacs --batch -Q -L .ci/consult -L .ci/compat -l tests/run-tests.el
+      - name: Remove bytecode for interpreted tests
+        shell: bash
+        run: rm openwith.elc
+      - name: Test interpreted source
+        run: emacs --batch -Q -L .ci/consult -L .ci/compat -l tests/run-tests.el
